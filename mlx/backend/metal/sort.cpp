@@ -24,13 +24,13 @@ void single_block_sort(
   // Prepare shapes
   int n_rows = in.size() / in.shape(axis);
 
-  std::vector<size_t> in_nc_str = in.strides();
+  auto in_nc_str = in.strides();
   in_nc_str.erase(in_nc_str.begin() + axis);
 
-  std::vector<size_t> out_nc_str = out.strides();
+  auto out_nc_str = out.strides();
   out_nc_str.erase(out_nc_str.begin() + axis);
 
-  std::vector<int> nc_shape = in.shape();
+  auto nc_shape = in.shape();
   nc_shape.erase(nc_shape.begin() + axis);
 
   int nc_dim = nc_shape.size();
@@ -82,9 +82,17 @@ void single_block_sort(
     compute_encoder.set_bytes(out_stride_segment_axis, 6);
   } else {
     compute_encoder.set_bytes(nc_dim, 5);
-    compute_encoder.set_vector_bytes(nc_shape, 6);
-    compute_encoder.set_vector_bytes(in_nc_str, 7);
-    compute_encoder.set_vector_bytes(out_nc_str, 8);
+    if (nc_shape.empty()) {
+      int shape = 0;
+      int64_t stride = 0;
+      compute_encoder.set_bytes(shape, 6);
+      compute_encoder.set_bytes(stride, 7);
+      compute_encoder.set_bytes(stride, 8);
+    } else {
+      compute_encoder.set_vector_bytes(nc_shape, 6);
+      compute_encoder.set_vector_bytes(in_nc_str, 7);
+      compute_encoder.set_vector_bytes(out_nc_str, 8);
+    }
   }
 
   MTL::Size group_dims = MTL::Size(bn, 1, 1);
@@ -106,10 +114,10 @@ void multi_block_sort(
   // Prepare shapes
   int n_rows = in.size() / in.shape(axis);
 
-  std::vector<size_t> nc_str = in.strides();
+  auto nc_str = in.strides();
   nc_str.erase(nc_str.begin() + axis);
 
-  std::vector<int> nc_shape = in.shape();
+  auto nc_shape = in.shape();
   nc_shape.erase(nc_shape.begin() + axis);
 
   int nc_dim = nc_shape.size();

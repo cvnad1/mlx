@@ -2,6 +2,7 @@
 
 import datetime
 import os
+import platform
 import re
 import subprocess
 import sys
@@ -60,14 +61,14 @@ class CMakeBuild(build_ext):
         cmake_args = [
             f"-DCMAKE_INSTALL_PREFIX={extdir}{os.sep}",
             f"-DCMAKE_BUILD_TYPE={cfg}",
-            "-DBUILD_SHARED_LIBS=ON",
             "-DMLX_BUILD_PYTHON_BINDINGS=ON",
             "-DMLX_BUILD_TESTS=OFF",
             "-DMLX_BUILD_BENCHMARKS=OFF",
             "-DMLX_BUILD_EXAMPLES=OFF",
             f"-DMLX_PYTHON_BINDINGS_OUTPUT_DIRECTORY={extdir}{os.sep}",
         ]
-        build_args = []
+        # Some generators require explcitly passing config when building.
+        build_args = ["--config", cfg]
         # Adding CMake arguments set as environment variable
         # (needed e.g. to build for ARM OSx on conda-forge)
         if "CMAKE_ARGS" in os.environ:
@@ -76,11 +77,18 @@ class CMakeBuild(build_ext):
         # Pass version to C++
         cmake_args += [f"-DMLX_VERSION={self.distribution.get_version()}"]  # type: ignore[attr-defined]
 
-        if sys.platform.startswith("darwin"):
+        if platform.system() == "Darwin":
             # Cross-compile support for macOS - respect ARCHFLAGS if set
             archs = re.findall(r"-arch (\S+)", os.environ.get("ARCHFLAGS", ""))
             if archs:
                 cmake_args += ["-DCMAKE_OSX_ARCHITECTURES={}".format(";".join(archs))]
+        if platform.system() == "Windows":
+            # On Windows DLLs must be put in the same dir with the extension
+            # while cmake puts mlx.dll into the "bin" sub-dir. Link with mlx
+            # statically to work around it.
+            cmake_args += ["-DBUILD_SHARED_LIBS=OFF"]
+        else:
+            cmake_args += ["-DBUILD_SHARED_LIBS=ON"]
 
         # Set CMAKE_BUILD_PARALLEL_LEVEL to control the parallel build level
         # across all generators.
@@ -178,7 +186,7 @@ if __name__ == "__main__":
         include_package_data=True,
         extras_require={
             "dev": [
-                "nanobind==2.2.0",
+                "nanobind==2.4.0",
                 "numpy",
                 "pre-commit",
                 "setuptools>=42",

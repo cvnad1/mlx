@@ -53,9 +53,9 @@ void Gather::eval_gpu(const std::vector<array>& inputs, array& out) {
   int idx_ndim = nidx ? inputs[1].ndim() : 0;
   size_t ndim = src.ndim();
 
-  bool large_index = nidx && inputs[1].size() > UINT32_MAX;
-  bool large_src = src.size() > UINT32_MAX;
-  bool large_out = out.size() > UINT32_MAX;
+  bool large_index = nidx && inputs[1].size() > INT32_MAX;
+  bool large_src = src.size() > INT32_MAX;
+  bool large_out = out.size() > INT32_MAX;
   bool large = large_index || large_src || large_out;
 
   std::string idx_type_name = nidx ? type_to_name(inputs[1]) : "";
@@ -65,7 +65,7 @@ void Gather::eval_gpu(const std::vector<array>& inputs, array& out) {
       idx_type_name,
       nidx,
       idx_ndim,
-      large ? "size_t" : "uint");
+      large ? "int64_t" : "int");
   std::string lib_name = kernel_name;
 
   auto lib = d.get_library(lib_name, [&]() {
@@ -86,7 +86,7 @@ void Gather::eval_gpu(const std::vector<array>& inputs, array& out) {
         idx_args,
         idx_arr,
         idx_ndim,
-        large ? "size_t" : "uint");
+        large ? "int64_t" : "int");
     return kernel_source;
   });
 
@@ -234,9 +234,9 @@ void Scatter::eval_gpu(const std::vector<array>& inputs, array& out) {
       break;
   }
   auto upd_contig = upd.flags().row_contiguous;
-  bool large_out = out.size() > UINT32_MAX;
-  bool large_idx = nidx && (inputs[1].size() > UINT32_MAX);
-  bool large_upd = upd.size() > UINT32_MAX;
+  bool large_out = out.size() > INT32_MAX;
+  bool large_idx = nidx && (inputs[1].size() > INT32_MAX);
+  bool large_upd = upd.size() > INT32_MAX;
   bool large = large_out || large_idx || large_upd;
   std::string kernel_name = fmt::format(
       "scatter{0}{1}_{2}_{3}_{4}_nwork{5}_{6}",
@@ -246,7 +246,7 @@ void Scatter::eval_gpu(const std::vector<array>& inputs, array& out) {
       nidx,
       upd_contig ? "updc_true" : "updc_false",
       nwork,
-      large ? "size_t" : "uint");
+      large ? "int64_t" : "int");
   std::string lib_name = kernel_name;
 
   auto lib = d.get_library(lib_name, [&]() {
@@ -290,7 +290,7 @@ void Scatter::eval_gpu(const std::vector<array>& inputs, array& out) {
         idx_arr,
         upd_contig,
         nwork,
-        large ? "size_t" : "uint");
+        large ? "int64_t" : "int");
     return kernel_source;
   });
 
@@ -312,8 +312,8 @@ void Scatter::eval_gpu(const std::vector<array>& inputs, array& out) {
     upd_size *= upd.shape(i);
   }
   // Collect all idx shapes and strides into one place
-  std::vector<int> idx_shapes;
-  std::vector<size_t> idx_strides;
+  Shape idx_shapes;
+  Strides idx_strides;
   // To access .data() use char instead of bool
   // bool is 1 byte in Metal so this is safe
   std::vector<char> idx_contigs;
@@ -332,7 +332,7 @@ void Scatter::eval_gpu(const std::vector<array>& inputs, array& out) {
   if (upd_ndim == 0) {
     // Need placeholders so Metal doesn't compalain
     int shape_ = 0;
-    size_t stride_ = 0;
+    int64_t stride_ = 0;
     compute_encoder.set_bytes(shape_, 3);
     compute_encoder.set_bytes(stride_, 4);
   } else {
@@ -347,7 +347,7 @@ void Scatter::eval_gpu(const std::vector<array>& inputs, array& out) {
   if (out_ndim == 0) {
     // Need placeholders so Metal doesn't compalain
     int shape_ = 0;
-    size_t stride_ = 0;
+    int64_t stride_ = 0;
     compute_encoder.set_bytes(shape_, 7);
     compute_encoder.set_bytes(stride_, 8);
   } else {

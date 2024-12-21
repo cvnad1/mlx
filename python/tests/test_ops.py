@@ -1091,6 +1091,16 @@ class TestOps(mlx_tests.MLXTestCase):
         out = mx.take(a, 1, axis=1)
         self.assertTrue(mx.array_equal(out, mx.array([1, 5])))
 
+        # Take with multi-dim scalar preserves dims
+        out = mx.take(a, mx.array(1), axis=0)
+        self.assertEqual(out.shape, (4,))
+
+        out = mx.take(a, mx.array([1]), axis=0)
+        self.assertEqual(out.shape, (1, 4))
+
+        out = mx.take(a, mx.array([[1]]), axis=0)
+        self.assertEqual(out.shape, (1, 1, 4))
+
     def test_take_along_axis(self):
         a_np = np.arange(8).reshape(2, 2, 2)
         a_mlx = mx.array(a_np)
@@ -1168,7 +1178,7 @@ class TestOps(mlx_tests.MLXTestCase):
             a = mx.arange(float("inf"), 1, float("inf"))
         with self.assertRaises(ValueError):
             a = mx.arange(float("inf"), 1, 5)
-        with self.assertRaises(ValueError):
+        with self.assertRaises(TypeError):
             INT_MAX = 2147483647
             a = mx.arange(0, INT_MAX + 1, 1)
 
@@ -1773,6 +1783,10 @@ class TestOps(mlx_tests.MLXTestCase):
                 y_mlx = mx.as_strided(x_mlx, shape, stride, offset)
                 self.assertTrue(np.array_equal(y_npy, y_mlx))
 
+        x = mx.random.uniform(shape=(32,))
+        y = mx.as_strided(x, (x.size,), (-1,), x.size - 1)
+        self.assertTrue(mx.array_equal(y, x[::-1]))
+
     def test_scans(self):
         a_npy = np.random.randn(32, 32, 32).astype(np.float32)
         a_mlx = mx.array(a_npy)
@@ -1966,6 +1980,12 @@ class TestOps(mlx_tests.MLXTestCase):
             b_np = np.sort(a_np)
             b_mx = mx.sort(a_mx)
             self.assertTrue(np.array_equal(b_np, b_mx))
+
+        # 1D strided sort
+        a = mx.array([[4, 3], [2, 1], [5, 4], [3, 2]])
+        out = mx.argsort(a[:, 1])
+        expected = mx.array([1, 3, 0, 2], dtype=mx.uint32)
+        self.assertTrue(mx.array_equal(out, expected))
 
     def test_partition(self):
         shape = (3, 4, 5)

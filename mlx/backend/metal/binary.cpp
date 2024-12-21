@@ -75,19 +75,21 @@ void binary_op_gpu_inplace(
       auto [shape, strides] = collapse_contiguous_dims(a, b, out);
       return std::make_tuple(shape, strides[0], strides[1], strides[2]);
     } else {
-      std::vector<size_t> e;
-      return std::make_tuple(std::vector<int>{}, e, e, e);
+      decltype(a.strides()) e{};
+      return std::make_tuple(decltype(a.shape()){}, e, e, e);
     }
   };
   auto [shape, strides_a, strides_b, strides_out] = maybe_collapse();
 
-  bool large = out.data_size() > UINT32_MAX;
+  bool large;
   auto ndim = shape.size();
   int work_per_thread;
   if (bopt == BinaryOpType::General) {
-    large |= (a.data_size() > UINT32_MAX || b.data_size() > UINT32_MAX);
+    large = a.data_size() > INT32_MAX || b.data_size() > INT32_MAX ||
+        out.size() > INT32_MAX;
     work_per_thread = large ? 4 : 2;
   } else {
+    large = out.data_size() > UINT32_MAX;
     work_per_thread = 1;
   }
   std::string kernel_name =

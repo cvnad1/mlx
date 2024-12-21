@@ -95,6 +95,9 @@ class TestBase(mlx_tests.MLXTestCase):
         m.save_weights(npz_file)
         m_load = make_model()
         m_load.load_weights(npz_file)
+
+        # Eval before cleanup so model file is unlocked.
+        mx.eval(m_load.state)
         tdir.cleanup()
 
         eq_tree = tree_map(mx.array_equal, m.parameters(), m_load.parameters())
@@ -110,6 +113,9 @@ class TestBase(mlx_tests.MLXTestCase):
         m.save_weights(safetensors_file)
         m_load = make_model()
         m_load.load_weights(safetensors_file)
+
+        # Eval before cleanup so model file is unlocked.
+        mx.eval(m_load.state)
         tdir.cleanup()
 
         eq_tree = tree_map(mx.array_equal, m.parameters(), m_load.parameters())
@@ -1819,6 +1825,15 @@ class TestLayers(mlx_tests.MLXTestCase):
             return ab / aa / bb
 
         self.assertGreater(cosine(y, yq).min(), 0.99)
+
+    def test_causal_mask(self):
+        mask = nn.MultiHeadAttention.create_additive_causal_mask(4, mx.float16)
+        self.assertFalse(mx.any(mx.isnan(mask)))
+        self.assertTrue(mask[0, -1].item() < 0)
+
+        mask = nn.MultiHeadAttention.create_additive_causal_mask(4, mx.bfloat16)
+        self.assertFalse(mx.any(mx.isnan(mask)))
+        self.assertTrue(mask[0, -1].item() < 0)
 
 
 if __name__ == "__main__":

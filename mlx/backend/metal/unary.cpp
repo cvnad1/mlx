@@ -30,15 +30,17 @@ void unary_op_gpu_inplace(
     if (!contig) {
       return collapse_contiguous_dims(in);
     } else {
-      return std::make_pair(std::vector<int>{}, std::vector<size_t>{});
+      return std::make_pair(Shape{}, Strides{});
     }
   };
   auto [shape, strides] = maybe_collapse();
   int ndim = shape.size();
   size_t nthreads = contig ? in.data_size() : in.size();
-  bool large = in.data_size() > UINT32_MAX;
+  bool large;
   if (!contig) {
-    large |= in.size() > UINT32_MAX;
+    large = in.data_size() > INT32_MAX || out.size() > INT32_MAX;
+  } else {
+    large = in.data_size() > UINT32_MAX;
   }
   int work_per_thread = !contig && large ? 4 : 1;
   std::string kernel_name;

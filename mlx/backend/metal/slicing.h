@@ -9,8 +9,8 @@ namespace mlx::core {
 void slice_gpu(
     const array& in,
     array& out,
-    const std::vector<int>& start_indices,
-    const std::vector<int>& strides,
+    const Shape& start_indices,
+    const Shape& strides,
     const Stream& s);
 
 void concatenate_gpu(
@@ -23,8 +23,8 @@ void pad_gpu(
     const array& in,
     const array& val,
     array& out,
-    std::vector<int> axes,
-    std::vector<int> low_pad_size,
+    const std::vector<int>& axes,
+    const Shape& low_pad_size,
     const Stream& s);
 
 } // namespace mlx::core

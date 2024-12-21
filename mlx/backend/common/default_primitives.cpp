@@ -57,6 +57,7 @@ DEFAULT(Equal)
 DEFAULT(Erf)
 DEFAULT(ErfInv)
 DEFAULT(Exp)
+DEFAULT(ExpandDims)
 DEFAULT(Expm1)
 DEFAULT(FFT)
 DEFAULT(Floor)
@@ -86,7 +87,6 @@ DEFAULT_MULTI(QRF)
 DEFAULT(QuantizedMatmul)
 DEFAULT(RandomBits)
 DEFAULT(Reduce)
-DEFAULT(Reshape)
 DEFAULT(Round)
 DEFAULT(Scan)
 DEFAULT(Scatter)
@@ -101,6 +101,7 @@ DEFAULT(Softmax)
 DEFAULT(Sort)
 DEFAULT_MULTI(Split)
 DEFAULT(Square)
+DEFAULT(Squeeze)
 DEFAULT(Sqrt)
 DEFAULT(StopGradient)
 DEFAULT(Subtract)
@@ -130,7 +131,7 @@ inline void matmul_common_general(
     } else {
       array arr_copy(arr.shape(), arr.dtype(), nullptr, {});
       copy(arr, arr_copy, CopyType::General);
-      size_t stx = arr.shape(-1);
+      stx = arr.shape(-1);
       return std::make_tuple(false, stx, arr_copy);
     }
   };

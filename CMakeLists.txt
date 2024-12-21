@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.24)
+cmake_minimum_required(VERSION 3.25)
 
 project(mlx LANGUAGES C CXX)
 
@@ -20,6 +20,7 @@ option(MLX_METAL_DEBUG "Enhance metal debug workflow" OFF)
 option(MLX_ENABLE_X64_MAC "Enable building for x64 macOS" OFF)
 option(MLX_BUILD_GGUF "Include support for GGUF format" ON)
 option(MLX_BUILD_SAFETENSORS "Include support for safetensors format" ON)
+option(MLX_BUILD_BLAS_FROM_SOURCE "Build OpenBLAS from source code" OFF)
 option(MLX_METAL_JIT "Use JIT compilation for Metal kernels" OFF)
 option(BUILD_SHARED_LIBS "Build mlx as a shared library" OFF)
 
@@ -93,8 +94,7 @@ elseif(MLX_BUILD_METAL)
   message(STATUS "Building with macOS SDK version ${MACOS_SDK_VERSION}")
 
   set(METAL_CPP_URL
-      https://developer.apple.com/metal/cpp/files/metal-cpp_macOS15_iOS18-beta.zip
-  )
+      https://developer.apple.com/metal/cpp/files/metal-cpp_macOS15_iOS18.zip)
 
   if(NOT CMAKE_OSX_DEPLOYMENT_TARGET STREQUAL "")
     set(XCRUN_FLAGS "-mmacosx-version-min=${CMAKE_OSX_DEPLOYMENT_TARGET}")
@@ -113,16 +113,55 @@ elseif(MLX_BUILD_METAL)
   target_link_libraries(mlx PUBLIC ${METAL_LIB} ${FOUNDATION_LIB} ${QUARTZ_LIB})
 endif()
 
+if(WIN32)
+  if(MSVC)
+    # GGUF does not build with MSVC.
+    set(MLX_BUILD_GGUF OFF)
+    # There is no prebuilt OpenBLAS distribution for MSVC.
+    set(MLX_BUILD_BLAS_FROM_SOURCE ON)
+  endif()
+  # Windows implementation of dlfcn.h APIs.
+  FetchContent_Declare(
+    dlfcn-win32
+    GIT_REPOSITORY https://github.com/dlfcn-win32/dlfcn-win32.git
+    GIT_TAG v1.4.1
+    EXCLUDE_FROM_ALL)
+  block()
+  set(BUILD_SHARED_LIBS OFF)
+  FetchContent_MakeAvailable(dlfcn-win32)
+  endblock()
+  target_include_directories(mlx PRIVATE "${dlfcn-win32_SOURCE_DIR}/src")
+  target_link_libraries(mlx PRIVATE dl)
+endif()
+
 if(MLX_BUILD_CPU)
   find_library(ACCELERATE_LIBRARY Accelerate)
   if(ACCELERATE_LIBRARY)
     message(STATUS "Accelerate found ${ACCELERATE_LIBRARY}")
     set(MLX_BUILD_ACCELERATE ON)
-    target_link_libraries(mlx PUBLIC ${ACCELERATE_LIBRARY})
-    add_compile_definitions(ACCELERATE_NEW_LAPACK)
   else()
     message(STATUS "Accelerate or arm neon not found, using default backend.")
     set(MLX_BUILD_ACCELERATE OFF)
+  endif()
+
+  if(MLX_BUILD_ACCELERATE)
+    target_link_libraries(mlx PUBLIC ${ACCELERATE_LIBRARY})
+    add_compile_definitions(ACCELERATE_NEW_LAPACK)
+  elseif(MLX_BUILD_BLAS_FROM_SOURCE)
+    # Download and build OpenBLAS from source code.
+    FetchContent_Declare(
+      openblas
+      GIT_REPOSITORY https://github.com/OpenMathLib/OpenBLAS.git
+      GIT_TAG v0.3.28
+      EXCLUDE_FROM_ALL)
+    set(BUILD_STATIC_LIBS ON) # link statically
+    set(NOFORTRAN ON) # msvc has no fortran compiler
+    FetchContent_MakeAvailable(openblas)
+    target_link_libraries(mlx PRIVATE openblas)
+    target_include_directories(
+      mlx PRIVATE "${openblas_SOURCE_DIR}/lapack-netlib/LAPACKE/include"
+                  "${CMAKE_BINARY_DIR}/generated" "${CMAKE_BINARY_DIR}")
+  else()
     if(${CMAKE_HOST_APPLE})
       # The blas shipped in macOS SDK is not supported, search homebrew for
       # openblas instead.
@@ -140,7 +179,7 @@ if(MLX_BUILD_CPU)
     message(STATUS "Lapack lib " ${LAPACK_LIBRARIES})
     message(STATUS "Lapack include " ${LAPACK_INCLUDE_DIRS})
     target_include_directories(mlx PRIVATE ${LAPACK_INCLUDE_DIRS})
-    target_link_libraries(mlx PUBLIC ${LAPACK_LIBRARIES})
+    target_link_libraries(mlx PRIVATE ${LAPACK_LIBRARIES})
     # List blas after lapack otherwise we may accidentally incldue an old
     # version of lapack.h from the include dirs of blas.
     find_package(BLAS REQUIRED)
@@ -153,14 +192,7 @@ if(MLX_BUILD_CPU)
     message(STATUS "Blas lib " ${BLAS_LIBRARIES})
     message(STATUS "Blas include " ${BLAS_INCLUDE_DIRS})
     target_include_directories(mlx PRIVATE ${BLAS_INCLUDE_DIRS})
-    target_link_libraries(mlx PUBLIC ${BLAS_LIBRARIES})
-
-    if(WIN32)
-      find_package(dlfcn-win32 REQUIRED)
-      message(STATUS "dlfcn-win32 lib " ${dlfcn-win32_LIBRARIES})
-      message(STATUS "dlfcn-win32 include " ${dlfcn-win32_INCLUDE_DIRS})
-      target_link_libraries(mlx PUBLIC ${dlfcn-win32_LIBRARIES})
-    endif()
+    target_link_libraries(mlx PRIVATE ${BLAS_LIBRARIES})
   endif()
 else()
   set(MLX_BUILD_ACCELERATE OFF)
@@ -207,8 +239,7 @@ if(MLX_BUILD_PYTHON_BINDINGS)
   execute_process(
     COMMAND "${Python_EXECUTABLE}" -m nanobind --cmake_dir
     OUTPUT_STRIP_TRAILING_WHITESPACE
-    OUTPUT_VARIABLE NB_DIR)
-  list(APPEND CMAKE_PREFIX_PATH "${NB_DIR}")
+    OUTPUT_VARIABLE nanobind_ROOT)
   find_package(nanobind CONFIG REQUIRED)
   add_subdirectory(${CMAKE_CURRENT_LIST_DIR}/python/src)
 endif()

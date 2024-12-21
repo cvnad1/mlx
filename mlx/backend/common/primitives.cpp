@@ -19,6 +19,16 @@
 
 namespace mlx::core {
 
+void reshape(const array& in, array& out) {
+  auto [copy_necessary, out_strides] = prepare_reshape(in, out);
+  if (copy_necessary) {
+    out.set_data(allocator::malloc_or_wait(out.nbytes()));
+    copy_inplace(in, out, CopyType::General);
+  } else {
+    shared_buffer_reshape(in, out_strides, out);
+  }
+}
+
 void Abs::eval(const std::vector<array>& inputs, array& out) {
   assert(inputs.size() == 1);
   auto& in = inputs[0];
@@ -258,6 +268,14 @@ void Expm1::eval(const std::vector<array>& inputs, array& out) {
   }
 }
 
+void Flatten::eval_cpu(const std::vector<array>& inputs, array& out) {
+  reshape(inputs[0], out);
+}
+
+void Unflatten::eval_cpu(const std::vector<array>& inputs, array& out) {
+  reshape(inputs[0], out);
+}
+
 void Floor::eval(const std::vector<array>& inputs, array& out) {
   assert(inputs.size() == 1);
   auto& in = inputs[0];
@@ -417,18 +435,8 @@ void Real::eval_cpu(const std::vector<array>& inputs, array& out) {
   unary_op<complex64_t, float>(inputs[0], out, detail::Real());
 }
 
-void Reshape::eval(const std::vector<array>& inputs, array& out) {
-  assert(inputs.size() == 1);
-  const auto& in = inputs[0];
-
-  auto [copy_necessary, out_strides] = prepare_reshape(in, out);
-
-  if (copy_necessary) {
-    out.set_data(allocator::malloc_or_wait(out.nbytes()));
-    copy_inplace(in, out, CopyType::General);
-  } else {
-    shared_buffer_reshape(in, out_strides, out);
-  }
+void Reshape::eval_cpu(const std::vector<array>& inputs, array& out) {
+  reshape(inputs[0], out);
 }
 
 void Round::eval(const std::vector<array>& inputs, array& out) {
@@ -498,34 +506,17 @@ void Slice::eval(const std::vector<array>& inputs, array& out) {
   auto& in = inputs[0];
 
   // Calculate out strides, initial offset and if copy needs to be made
-  auto [copy_needed, data_offset, inp_strides] =
-      prepare_slice(in, start_indices_, strides_);
-
-  // Do copy if needed
-  if (copy_needed) {
-    out.set_data(allocator::malloc_or_wait(out.nbytes()));
-    std::vector<int64_t> ostrides{out.strides().begin(), out.strides().end()};
-    copy_inplace<int64_t>(
-        /* const array& src = */ in,
-        /* array& dst = */ out,
-        /* const std::vector<int>& data_shape = */ out.shape(),
-        /* const std::vector<stride_t>& i_strides = */ inp_strides,
-        /* const std::vector<stride_t>& o_strides = */ ostrides,
-        /* int64_t i_offset = */ data_offset,
-        /* int64_t o_offset = */ 0,
-        /* CopyType ctype = */ CopyType::General);
-  } else {
-    size_t data_end = 1;
-    for (int i = 0; i < end_indices_.size(); ++i) {
-      if (in.shape()[i] > 1) {
-        auto end_idx = start_indices_[i] + out.shape()[i] * strides_[i] - 1;
-        data_end += end_idx * in.strides()[i];
-      }
+  auto [data_offset, inp_strides] = prepare_slice(in, start_indices_, strides_);
+  size_t data_end = 1;
+  for (int i = 0; i < end_indices_.size(); ++i) {
+    if (in.shape()[i] > 1) {
+      auto end_idx = start_indices_[i] + out.shape()[i] * strides_[i] - 1;
+      data_end += end_idx * in.strides()[i];
     }
-    size_t data_size = data_end - data_offset;
-    std::vector<size_t> ostrides{inp_strides.begin(), inp_strides.end()};
-    shared_buffer_slice(in, ostrides, data_offset, data_size, out);
   }
+  size_t data_size = data_end - data_offset;
+  Strides ostrides{inp_strides.begin(), inp_strides.end()};
+  shared_buffer_slice(in, ostrides, data_offset, data_size, out);
 }
 
 void SliceUpdate::eval(const std::vector<array>& inputs, array& out) {
@@ -550,11 +541,11 @@ void SliceUpdate::eval(const std::vector<array>& inputs, array& out) {
   copy(in, out, in.data_size() == 1 ? CopyType::Scalar : ctype);
 
   // Calculate out strides, initial offset and if copy needs to be made
-  auto [data_offset, out_strides] = prepare_slice(out);
+  auto [data_offset, out_strides] = prepare_slice(in, start_indices_, strides_);
 
   // Do copy
-  std::vector<int64_t> upd_strides{upd.strides().begin(), upd.strides().end()};
-  copy_inplace<int64_t>(
+  Strides upd_strides{upd.strides().begin(), upd.strides().end()};
+  copy_inplace(
       /* const array& src = */ upd,
       /* array& dst = */ out,
       /* const std::vector<int>& data_shape = */ upd.shape(),

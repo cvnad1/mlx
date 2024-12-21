@@ -983,6 +983,28 @@ class Expm1 : public UnaryPrimitive {
   void eval(const std::vector<array>& inputs, array& out);
 };
 
+class ExpandDims : public UnaryPrimitive {
+ public:
+  explicit ExpandDims(Stream stream, std::vector<int> axes)
+      : UnaryPrimitive(stream), axes_(std::move(axes)) {}
+
+  void eval_cpu(const std::vector<array>& inputs, array& out) override;
+  void eval_gpu(const std::vector<array>& inputs, array& out) override;
+
+  DEFINE_VMAP()
+  DEFINE_GRADS()
+  DEFINE_PRINT(ExpandDims)
+
+  std::vector<Shape> output_shapes(const std::vector<array>& inputs) override;
+  bool is_equivalent(const Primitive& other) const override;
+
+  static Shape output_shape(const array& input, const std::vector<int>& axes);
+
+ private:
+  void eval(const std::vector<array>& inputs, array& out);
+  std::vector<int> axes_;
+};
+
 class FFT : public UnaryPrimitive {
  public:
   explicit FFT(
@@ -1006,6 +1028,28 @@ class FFT : public UnaryPrimitive {
   bool inverse_;
   bool real_;
 
+  void eval(const std::vector<array>& inputs, array& out);
+};
+
+class Flatten : public UnaryPrimitive {
+ public:
+  explicit Flatten(Stream stream, int start_axis, int end_axis)
+      : UnaryPrimitive(stream), start_axis_(start_axis), end_axis_(end_axis) {}
+
+  void eval_cpu(const std::vector<array>& inputs, array& out) override;
+  void eval_gpu(const std::vector<array>& inputs, array& out) override;
+
+  DEFINE_VMAP()
+  DEFINE_GRADS()
+  DEFINE_PRINT(Flatten)
+  std::vector<Shape> output_shapes(const std::vector<array>& inputs) override;
+  bool is_equivalent(const Primitive& other) const override;
+
+  static Shape output_shape(const array& input, int start_axis, int end_axis);
+
+ private:
+  int start_axis_;
+  int end_axis_;
   void eval(const std::vector<array>& inputs, array& out);
 };
 
@@ -1044,11 +1088,10 @@ class Full : public UnaryPrimitive {
 
 class Gather : public UnaryPrimitive {
  public:
-  explicit Gather(
-      Stream stream,
-      const std::vector<int>& axes,
-      const std::vector<int>& slice_sizes)
-      : UnaryPrimitive(stream), axes_(axes), slice_sizes_(slice_sizes) {}
+  explicit Gather(Stream stream, std::vector<int> axes, Shape slice_sizes)
+      : UnaryPrimitive(stream),
+        axes_(std::move(axes)),
+        slice_sizes_(std::move(slice_sizes)) {}
 
   void eval_cpu(const std::vector<array>& inputs, array& out) override;
   void eval_gpu(const std::vector<array>& inputs, array& out) override;
@@ -1062,7 +1105,7 @@ class Gather : public UnaryPrimitive {
  private:
   void eval(const std::vector<array>& inputs, array& out);
   std::vector<int> axes_;
-  std::vector<int> slice_sizes_;
+  Shape slice_sizes_;
 };
 
 class Greater : public UnaryPrimitive {
@@ -1457,8 +1500,8 @@ class Pad : public UnaryPrimitive {
   explicit Pad(
       Stream stream,
       const std::vector<int>& axes,
-      const std::vector<int>& low_pad_size,
-      const std::vector<int>& high_pad_size)
+      const Shape& low_pad_size,
+      const Shape& high_pad_size)
       : UnaryPrimitive(stream),
         axes_(axes),
         low_pad_size_(low_pad_size),
@@ -1474,8 +1517,8 @@ class Pad : public UnaryPrimitive {
 
  private:
   std::vector<int> axes_;
-  std::vector<int> low_pad_size_;
-  std::vector<int> high_pad_size_;
+  Shape low_pad_size_;
+  Shape high_pad_size_;
 
   void eval(const std::vector<array>& inputs, array& out);
 };
@@ -1619,16 +1662,6 @@ class Reshape : public UnaryPrimitive {
 
  private:
   Shape shape_;
-
-  void eval(const std::vector<array>& inputs, array& out);
-
-  static std::pair<bool, Strides> prepare_reshape(
-      const array& in,
-      const array& out);
-  static void shared_buffer_reshape(
-      const array& in,
-      const Strides& out_strides,
-      array& out);
 };
 
 class Reduce : public UnaryPrimitive {
@@ -1867,9 +1900,9 @@ class Slice : public UnaryPrimitive {
  public:
   explicit Slice(
       Stream stream,
-      const std::vector<int>& start_indices,
-      const std::vector<int>& end_indices,
-      const std::vector<int>& strides)
+      const Shape& start_indices,
+      const Shape& end_indices,
+      const Shape& strides)
       : UnaryPrimitive(stream),
         start_indices_(start_indices),
         end_indices_(end_indices),
@@ -1884,9 +1917,9 @@ class Slice : public UnaryPrimitive {
   bool is_equivalent(const Primitive& other) const override;
 
  private:
-  std::vector<int> start_indices_;
-  std::vector<int> end_indices_;
-  std::vector<int> strides_;
+  Shape start_indices_;
+  Shape end_indices_;
+  Shape strides_;
 
   void eval(const std::vector<array>& inputs, array& out);
 };
@@ -1895,9 +1928,9 @@ class SliceUpdate : public UnaryPrimitive {
  public:
   explicit SliceUpdate(
       Stream stream,
-      const std::vector<int>& start_indices,
-      const std::vector<int>& end_indices,
-      const std::vector<int>& strides)
+      const Shape& start_indices,
+      const Shape& end_indices,
+      const Shape& strides)
       : UnaryPrimitive(stream),
         start_indices_(start_indices),
         end_indices_(end_indices),
@@ -1912,13 +1945,11 @@ class SliceUpdate : public UnaryPrimitive {
   bool is_equivalent(const Primitive& other) const override;
 
  private:
-  std::vector<int> start_indices_;
-  std::vector<int> end_indices_;
-  std::vector<int> strides_;
+  Shape start_indices_;
+  Shape end_indices_;
+  Shape strides_;
 
   void eval(const std::vector<array>& inputs, array& out);
-
-  std::tuple<int64_t, std::vector<int64_t>> prepare_slice(const array& in);
 };
 
 class Softmax : public UnaryPrimitive {
@@ -1963,7 +1994,7 @@ class Sort : public UnaryPrimitive {
 
 class Split : public Primitive {
  public:
-  explicit Split(Stream stream, const std::vector<int>& indices, int axis)
+  explicit Split(Stream stream, const Shape& indices, int axis)
       : Primitive(stream), indices_(indices), axis_(axis) {}
 
   void eval_cpu(const std::vector<array>& inputs, std::vector<array>& outputs)
@@ -1979,7 +2010,7 @@ class Split : public Primitive {
  private:
   void eval(const std::vector<array>& inputs, std::vector<array>& outputs);
 
-  std::vector<int> indices_;
+  Shape indices_;
   int axis_;
 };
 
@@ -2059,6 +2090,28 @@ class Subtract : public UnaryPrimitive {
   void eval(const std::vector<array>& inputs, array& out);
 };
 
+class Squeeze : public UnaryPrimitive {
+ public:
+  explicit Squeeze(Stream stream, std::vector<int> axes)
+      : UnaryPrimitive(stream), axes_(std::move(axes)) {}
+
+  void eval_cpu(const std::vector<array>& inputs, array& out) override;
+  void eval_gpu(const std::vector<array>& inputs, array& out) override;
+
+  DEFINE_VMAP()
+  DEFINE_GRADS()
+  DEFINE_PRINT(Squeeze)
+
+  std::vector<Shape> output_shapes(const std::vector<array>& inputs) override;
+  bool is_equivalent(const Primitive& other) const override;
+
+  static Shape output_shape(const array& input, const std::vector<int>& axes);
+
+ private:
+  void eval(const std::vector<array>& inputs, array& out);
+  std::vector<int> axes_;
+};
+
 class Tan : public UnaryPrimitive {
  public:
   explicit Tan(Stream stream) : UnaryPrimitive(stream) {}
@@ -2090,6 +2143,28 @@ class Tanh : public UnaryPrimitive {
   DEFINE_INPUT_OUTPUT_SHAPE()
 
  private:
+  void eval(const std::vector<array>& inputs, array& out);
+};
+
+class Unflatten : public UnaryPrimitive {
+ public:
+  explicit Unflatten(Stream stream, int axis, Shape shape)
+      : UnaryPrimitive(stream), axis_(axis), shape_(std::move(shape)) {}
+
+  void eval_cpu(const std::vector<array>& inputs, array& out) override;
+  void eval_gpu(const std::vector<array>& inputs, array& out) override;
+
+  DEFINE_VMAP()
+  DEFINE_GRADS()
+  DEFINE_PRINT(Unflatten)
+  std::vector<Shape> output_shapes(const std::vector<array>& inputs) override;
+  bool is_equivalent(const Primitive& other) const override;
+
+  static Shape output_shape(const array& input, int axis, const Shape& shape);
+
+ private:
+  int axis_;
+  Shape shape_;
   void eval(const std::vector<array>& inputs, array& out);
 };
 

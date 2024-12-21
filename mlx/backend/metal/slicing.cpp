@@ -11,39 +11,21 @@ namespace mlx::core {
 void slice_gpu(
     const array& in,
     array& out,
-    const std::vector<int>& start_indices,
-    const std::vector<int>& strides,
+    const Shape& start_indices,
+    const Shape& strides,
     const Stream& s) {
   // Calculate out strides, initial offset and if copy needs to be made
-  auto [copy_needed, data_offset, inp_strides] =
-      prepare_slice(in, start_indices, strides);
+  auto [data_offset, inp_strides] = prepare_slice(in, start_indices, strides);
 
-  // Do copy if needed
-  if (copy_needed) {
-    out.set_data(allocator::malloc_or_wait(out.nbytes()));
-    std::vector<int64_t> ostrides{out.strides().begin(), out.strides().end()};
-    copy_gpu_inplace(
-        /* const array& in = */ in,
-        /* array& out = */ out,
-        /* const std::vector<int>& data_shape = */ out.shape(),
-        /* const std::vector<stride_t>& i_strides = */ inp_strides,
-        /* const std::vector<stride_t>& o_strides = */ ostrides,
-        /* int64_t i_offset = */ data_offset,
-        /* int64_t o_offset = */ 0,
-        /* CopyType ctype = */ CopyType::General,
-        /* const Stream& s = */ s);
-  } else {
-    std::vector<size_t> ostrides{inp_strides.begin(), inp_strides.end()};
-    size_t data_end = 1;
-    for (int i = 0; i < strides.size(); ++i) {
-      if (in.shape()[i] > 1) {
-        auto end_idx = start_indices[i] + out.shape()[i] * strides[i] - 1;
-        data_end += end_idx * in.strides()[i];
-      }
+  size_t data_end = 1;
+  for (int i = 0; i < strides.size(); ++i) {
+    if (in.shape()[i] > 1) {
+      auto end_idx = start_indices[i] + out.shape()[i] * strides[i] - 1;
+      data_end += end_idx * in.strides()[i];
     }
-    size_t data_size = data_end - data_offset;
-    shared_buffer_slice(in, ostrides, data_offset, data_size, out);
   }
+  size_t data_size = data_end - data_offset;
+  shared_buffer_slice(in, inp_strides, data_offset, data_size, out);
 }
 
 void concatenate_gpu(
@@ -81,8 +63,8 @@ void pad_gpu(
     const array& in,
     const array& val,
     array& out,
-    std::vector<int> axes,
-    std::vector<int> low_pad_size,
+    const std::vector<int>& axes,
+    const Shape& low_pad_size,
     const Stream& s) {
   // Fill output with val
   fill_gpu(val, out, s);

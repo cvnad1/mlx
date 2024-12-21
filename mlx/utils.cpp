@@ -4,6 +4,7 @@
 #include <sstream>
 #include <vector>
 
+#include "mlx/types/limits.h"
 #include "mlx/utils.h"
 
 namespace mlx::core {
@@ -56,7 +57,10 @@ inline void PrintFormatter::print(std::ostream& os, complex64_t val) {
   os << val;
 }
 
-PrintFormatter global_formatter;
+PrintFormatter& get_global_formatter() {
+  static PrintFormatter formatter;
+  return formatter;
+}
 
 Dtype result_type(const std::vector<array>& arrays) {
   Dtype t = bool_;
@@ -98,29 +102,17 @@ Shape broadcast_shapes(const Shape& s1, const Shape& s2) {
   return out_shape;
 }
 
-bool is_same_shape(const std::vector<array>& arrays) {
-  if (arrays.empty()) {
-    return true;
-  }
-  return std::all_of(arrays.begin() + 1, arrays.end(), [&](const array& a) {
-    return (a.shape() == arrays[0].shape());
-  });
-}
-
-int normalize_axis(int axis, int ndim) {
-  if (ndim <= 0) {
-    throw std::invalid_argument("Number of dimensions must be positive.");
-  }
+int normalize_axis_index(
+    int axis,
+    int ndim,
+    const std::string& msg_prefix /* = "" */) {
   if (axis < -ndim || axis >= ndim) {
     std::ostringstream msg;
-    msg << "Axis " << axis << " is out of bounds for array with " << ndim
-        << " dimensions.";
+    msg << msg_prefix << "Axis " << axis << " is out of bounds for array with "
+        << ndim << " dimensions.";
     throw std::invalid_argument(msg.str());
   }
-  if (axis < 0) {
-    axis += ndim;
-  }
-  return axis;
+  return axis < 0 ? axis + ndim : axis;
 }
 
 std::ostream& operator<<(std::ostream& os, const Device& d) {
@@ -183,7 +175,7 @@ void print_subarray(std::ostream& os, const array& a, size_t index, int dim) {
       i = n - num_print - 1;
       index += s * (n - 2 * num_print - 1);
     } else if (is_last) {
-      global_formatter.print(os, a.data<T>()[index]);
+      get_global_formatter().print(os, a.data<T>()[index]);
     } else {
       print_subarray<T>(os, a, index, dim + 1);
     }
@@ -199,7 +191,7 @@ void print_array(std::ostream& os, const array& a) {
   os << "array(";
   if (a.ndim() == 0) {
     auto data = a.data<T>();
-    global_formatter.print(os, data[0]);
+    get_global_formatter().print(os, data[0]);
   } else {
     print_subarray<T>(os, a, 0, 0);
   }
@@ -305,16 +297,7 @@ std::ostream& operator<<(std::ostream& os, array a) {
   return os;
 }
 
-std::ostream& operator<<(std::ostream& os, const Shape& v) {
-  os << "(";
-  for (int i = 0; i < v.size(); ++i) {
-    os << v[i] << ((i == v.size() - 1) ? "" : ",");
-  }
-  os << ")";
-  return os;
-}
-
-std::ostream& operator<<(std::ostream& os, const Strides& v) {
+std::ostream& operator<<(std::ostream& os, const std::vector<int>& v) {
   os << "(";
   for (int i = 0; i < v.size(); ++i) {
     os << v[i] << ((i == v.size() - 1) ? "" : ",");
@@ -343,5 +326,29 @@ int get_var(const char* name, int default_value) {
 }
 
 } // namespace env
+
+template <typename T>
+void set_finfo_limits(float& min, float& max) {
+  min = numeric_limits<T>::lowest();
+  max = numeric_limits<T>::max();
+}
+
+finfo::finfo(Dtype dtype) : dtype(dtype) {
+  if (!issubdtype(dtype, inexact)) {
+    std::ostringstream msg;
+    msg << "[finfo] dtype " << dtype << " is not inexact.";
+    throw std::invalid_argument(msg.str());
+  }
+  if (dtype == float32) {
+    set_finfo_limits<float>(min, max);
+  } else if (dtype == float16) {
+    set_finfo_limits<float16_t>(min, max);
+  } else if (dtype == bfloat16) {
+    set_finfo_limits<bfloat16_t>(min, max);
+  } else if (dtype == complex64) {
+    this->dtype = float32;
+    set_finfo_limits<float>(min, max);
+  }
+}
 
 } // namespace mlx::core

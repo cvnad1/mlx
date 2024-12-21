@@ -144,8 +144,7 @@ std::pair<std::vector<array>, std::vector<int>> Primitive::vmap(
   throw std::invalid_argument(msg.str());
 }
 
-std::vector<std::vector<int>> Primitive::output_shapes(
-    const std::vector<array>&) {
+std::vector<Shape> Primitive::output_shapes(const std::vector<array>&) {
   std::ostringstream msg;
   msg << "[Primitive::output_shapes] ";
   this->print(msg);
@@ -818,10 +817,10 @@ std::vector<array> Concatenate::vjp(
     const std::vector<int>& argnums,
     const std::vector<array>&) {
   auto& cotan = cotangents[0];
-  std::vector<int> start(cotan.ndim(), 0);
-  std::vector<int> stop = cotan.shape();
+  Shape start(cotan.ndim(), 0);
+  Shape stop = cotan.shape();
 
-  std::vector<int> sizes;
+  Shape sizes;
   sizes.push_back(0);
   for (auto& p : primals) {
     sizes.push_back(p.shape(axis_));
@@ -957,9 +956,9 @@ array conv_weight_backward_patches(
     const std::vector<int>& padding,
     StreamOrDevice s) {
   // Resolve Padded input shapes and strides
-  std::vector<int> padding_starts(in.ndim(), 0);
-  std::vector<int> padding_ends = in.shape();
-  std::vector<int> in_padded_shape = in.shape();
+  Shape padding_starts(in.ndim(), 0);
+  auto padding_ends = in.shape();
+  auto in_padded_shape = in.shape();
 
   // padded shape
   for (int i = 1; i < in.ndim() - 1; i++) {
@@ -969,7 +968,7 @@ array conv_weight_backward_patches(
   }
 
   // padded strides (contiguous)
-  std::vector<size_t> in_padded_strides(in.ndim(), 1);
+  Strides in_padded_strides(in.ndim(), 1);
   for (int i = in.ndim() - 2; i >= 0; --i) {
     in_padded_strides[i] = in_padded_strides[i + 1] * in_padded_shape[i + 1];
   }
@@ -977,21 +976,21 @@ array conv_weight_backward_patches(
   // Pad input
   std::vector<int> padded_axes(in.ndim() - 2, 0);
   std::iota(padded_axes.begin(), padded_axes.end(), 1);
+  Shape padding_(padding.begin(), padding.end());
   auto in_padded = pad(
-      in, padded_axes, padding, padding, array(0, in.dtype()), "constant", s);
+      in, padded_axes, padding_, padding_, array(0, in.dtype()), "constant", s);
 
   // Resolve strided patches
 
   // patches are shaped as
   // (batch_dim, out_spatial_dims, weight_spatial_dims, in_channels)
-  std::vector<int> patches_shape{
-      cotan.shape().begin(), cotan.shape().end() - 1};
+  Shape patches_shape{cotan.shape().begin(), cotan.shape().end() - 1};
   patches_shape.insert(
       patches_shape.end(), wt.shape().begin() + 1, wt.shape().end());
 
   // Resolve patch strides
   int n_spatial_dim = in.ndim() - 2;
-  std::vector<size_t> patches_strides(patches_shape.size(), 1);
+  Strides patches_strides(patches_shape.size(), 1);
   patches_strides[0] = in_padded_strides[0];
   for (int i = 1; i < n_spatial_dim + 1; i++) {
     patches_strides[i] = in_padded_strides[i] * kernel_strides[i - 1];
@@ -1095,8 +1094,8 @@ std::vector<array> Convolution::vjp(
 
       // Handle negative padding
       if (has_neg_padding) {
-        std::vector<int> starts(grad.ndim(), 0);
-        std::vector<int> stops = grad.shape();
+        Shape starts(grad.ndim(), 0);
+        auto stops = grad.shape();
 
         for (int i = 0; i < grad.ndim() - 2; i++) {
           if (padding_lo[i] < 0) {
@@ -1604,10 +1603,161 @@ std::pair<std::vector<array>, std::vector<int>> Expm1::vmap(
   return {{expm1(inputs[0], stream())}, axes};
 }
 
+std::vector<array> ExpandDims::vjp(
+    const std::vector<array>&,
+    const std::vector<array>& cotangents,
+    const std::vector<int>&,
+    const std::vector<array>&) {
+  return {squeeze(cotangents[0], axes_, stream())};
+}
+
+std::vector<array> ExpandDims::jvp(
+    const std::vector<array>&,
+    const std::vector<array>& tangents,
+    const std::vector<int>&) {
+  return {expand_dims(tangents[0], axes_, stream())};
+}
+
+std::pair<std::vector<array>, std::vector<int>> ExpandDims::vmap(
+    const std::vector<array>& inputs,
+    const std::vector<int>& axes) {
+  auto ax = axes[0];
+  auto expand_axes = axes_;
+  for (auto& s : expand_axes) {
+    if (s >= axes[0]) {
+      s++;
+    } else {
+      ax++;
+    }
+  }
+  return {{expand_dims(inputs[0], std::move(expand_axes), stream())}, {ax}};
+}
+
+bool ExpandDims::is_equivalent(const Primitive& other) const {
+  const ExpandDims& a_other = static_cast<const ExpandDims&>(other);
+  return (axes_ == a_other.axes_);
+}
+
+Shape ExpandDims::output_shape(
+    const array& input,
+    const std::vector<int>& axes) {
+  auto shape = input.shape();
+  for (auto ax : axes) {
+    shape.insert(shape.begin() + ax, 1);
+  }
+  return shape;
+}
+
+std::vector<Shape> ExpandDims::output_shapes(const std::vector<array>& inputs) {
+  return {ExpandDims::output_shape(inputs[0], axes_)};
+}
+
+std::vector<array> Flatten::vjp(
+    const std::vector<array>& primals,
+    const std::vector<array>& cotangents,
+    const std::vector<int>&,
+    const std::vector<array>&) {
+  auto& in = primals[0];
+  Shape unflatten_shape(
+      in.shape().begin() + start_axis_, in.shape().begin() + end_axis_ + 1);
+  return {unflatten(
+      cotangents[0], start_axis_, std::move(unflatten_shape), stream())};
+}
+
+std::vector<array> Flatten::jvp(
+    const std::vector<array>&,
+    const std::vector<array>& tangents,
+    const std::vector<int>&) {
+  return {flatten(tangents[0], start_axis_, end_axis_, stream())};
+}
+
+std::pair<std::vector<array>, std::vector<int>> Flatten::vmap(
+    const std::vector<array>& inputs,
+    const std::vector<int>& axes) {
+  auto ax = axes[0];
+  auto start_axis = start_axis_;
+  auto end_axis = end_axis_;
+  if (ax < start_axis) {
+    start_axis++;
+    end_axis++;
+  } else {
+    ax -= (end_axis - start_axis);
+  }
+  return {{flatten(inputs[0], start_axis, end_axis, stream())}, {ax}};
+}
+
+bool Flatten::is_equivalent(const Primitive& other) const {
+  const Flatten& a_other = static_cast<const Flatten&>(other);
+  return start_axis_ == a_other.start_axis_ && end_axis_ == a_other.end_axis_;
+}
+
+Shape Flatten::output_shape(const array& input, int start_axis, int end_axis) {
+  Shape shape = input.shape();
+  auto flat_size = input.shape(start_axis);
+  for (int ax = start_axis + 1; ax <= end_axis; ++ax) {
+    flat_size *= input.shape(ax);
+  }
+  shape.erase(shape.begin() + start_axis + 1, shape.begin() + end_axis + 1);
+  shape[start_axis] = flat_size;
+  return shape;
+}
+
+std::vector<Shape> Flatten::output_shapes(const std::vector<array>& inputs) {
+  return {Flatten::output_shape(inputs[0], start_axis_, end_axis_)};
+}
+
 bool FFT::is_equivalent(const Primitive& other) const {
   const FFT& r_other = static_cast<const FFT&>(other);
   return axes_ == r_other.axes_ && inverse_ == r_other.inverse_ &&
       real_ == r_other.real_;
+}
+
+std::vector<array> Unflatten::vjp(
+    const std::vector<array>&,
+    const std::vector<array>& cotangents,
+    const std::vector<int>&,
+    const std::vector<array>&) {
+  return {flatten(cotangents[0], axis_, axis_ + shape_.size() - 1, stream())};
+}
+
+std::vector<array> Unflatten::jvp(
+    const std::vector<array>&,
+    const std::vector<array>& tangents,
+    const std::vector<int>&) {
+  return {unflatten(tangents[0], axis_, shape_, stream())};
+}
+
+std::pair<std::vector<array>, std::vector<int>> Unflatten::vmap(
+    const std::vector<array>& inputs,
+    const std::vector<int>& axes) {
+  auto ax = axes[0];
+  auto axis = axis_;
+  if (ax <= axis_) {
+    axis++;
+  } else {
+    ax += (shape_.size() - 1);
+  }
+  return {{unflatten(inputs[0], axis, shape_, stream())}, {ax}};
+}
+
+bool Unflatten::is_equivalent(const Primitive& other) const {
+  const auto& a_other = static_cast<const Unflatten&>(other);
+  return axis_ == a_other.axis_ && shape_ == a_other.shape_;
+}
+
+Shape Unflatten::output_shape(
+    const array& input,
+    int axis,
+    const Shape& shape) {
+  Shape out_shape = input.shape();
+  out_shape[axis] = shape[0];
+  out_shape.insert(
+      out_shape.begin() + axis + 1, shape.begin() + 1, shape.end());
+  return out_shape;
+}
+
+std::vector<Shape> Unflatten::output_shapes(const std::vector<array>& inputs) {
+  return {Unflatten::output_shape(inputs[0], axis_, shape_)};
 }
 
 std::pair<std::vector<array>, std::vector<int>> FFT::vmap(
@@ -1648,7 +1798,7 @@ std::vector<array> FFT::vjp(
   std::vector<int> axes(axes_.begin(), axes_.end());
   if (real_ && inverse_) {
     auto out = fft::fftn(cotangents[0], axes, stream());
-    auto start = std::vector<int>(out.ndim(), 0);
+    auto start = Shape(out.ndim(), 0);
     auto stop = in.shape();
     out = slice(out, start, stop, stream());
     auto mask_shape = out.shape();
@@ -1660,7 +1810,7 @@ std::vector<array> FFT::vjp(
     mask = concatenate({pad, mask, pad}, axes_.back(), stream());
     return {multiply(mask, out, stream())};
   } else if (real_) {
-    std::vector<int> n;
+    Shape n;
     for (auto ax : axes_) {
       n.push_back(in.shape()[ax]);
     }
@@ -1785,10 +1935,11 @@ std::pair<std::vector<array>, std::vector<int>> Gather::vmap(
     }
     if (indices_vmapped) {
       // Make a new index array for the vmapped dimension
-      auto vmap_inds = arange(0, src.shape(axes[0]), stream());
+      auto vmap_inds =
+          arange(static_cast<ShapeElem>(0), src.shape(axes[0]), stream());
       // Reshape it so it broadcasts with other index arrays
       {
-        auto shape = std::vector<int>(idx_dims, 1);
+        auto shape = Shape(idx_dims, 1);
         shape[out_ax] = vmap_inds.size();
         vmap_inds = reshape(vmap_inds, std::move(shape), stream());
       }
@@ -1848,7 +1999,7 @@ bool Gather::is_equivalent(const Primitive& other) const {
 std::vector<Shape> Gather::output_shapes(const std::vector<array>& inputs) {
   Shape out_shape;
   if (inputs.size() > 1) {
-    out_shape = inputs[0].shape();
+    out_shape = inputs[1].shape();
   }
   out_shape.insert(out_shape.end(), slice_sizes_.begin(), slice_sizes_.end());
   return {std::move(out_shape)};
@@ -2479,8 +2630,8 @@ std::vector<array> Pad::vjp(
   assert(argnums.size() == 1 && argnums[0] == 0);
 
   auto& cotan = cotangents[0];
-  std::vector<int> start(cotan.ndim(), 0);
-  std::vector<int> stop = cotan.shape();
+  Shape start(cotan.ndim(), 0);
+  auto stop = cotan.shape();
 
   for (auto i : axes_) {
     start[i] = low_pad_size_[i];
@@ -2870,7 +3021,7 @@ std::vector<array> Reduce::vjp(
     const std::vector<array>& outputs) {
   auto in = primals[0];
 
-  std::vector<int> shape = in.shape();
+  auto shape = in.shape();
   for (auto ax : axes_) {
     shape[ax] = 1;
   }
@@ -2895,7 +3046,7 @@ std::vector<array> Reduce::vjp(
     if (axes_.size() > 1) {
       std::vector<int> transpose_to;
       std::vector<int> transpose_back;
-      std::vector<int> shape_flat;
+      Shape shape_flat;
       {
         // Find the transpose needed to move axes_ to the back and the shape
         // except the reduced over axes.
@@ -3273,7 +3424,7 @@ std::pair<std::vector<array>, std::vector<int>> Scatter::vmap(
     }
 
     auto vmap_inds = arange(vmap_size, inputs[1].dtype(), stream());
-    auto vmap_inds_shape = std::vector<int>(inputs[1].ndim(), 1);
+    auto vmap_inds_shape = Shape(inputs[1].ndim(), 1);
     vmap_inds_shape[0] = vmap_inds.size();
     vmap_inds = reshape(vmap_inds, std::move(vmap_inds_shape), stream());
     inputs.insert(
@@ -3458,7 +3609,7 @@ std::vector<array> Slice::vjp(
   // Transpose and reshape cotangents
   auto cotan = cotangents[0];
   if (!ind_axes.empty()) {
-    std::vector<int> cotan_shape;
+    Shape cotan_shape;
     for (auto ax : ind_axes) {
       cotan_shape.push_back(cotan.shape(ax));
     }
@@ -3477,7 +3628,7 @@ std::vector<array> Slice::vjp(
   }
 
   // Make indices broadcastable
-  std::vector<int> inds_shape(inds.size(), 1);
+  Shape inds_shape(inds.size(), 1);
   for (int i = 0; i < inds.size(); ++i) {
     inds_shape[i] = inds[i].size();
     inds[i] = reshape(inds[i], inds_shape, stream());
@@ -3849,6 +4000,57 @@ std::pair<std::vector<array>, std::vector<int>> Subtract::vmap(
   return {{subtract(a, b, stream())}, {to_ax}};
 }
 
+std::vector<array> Squeeze::vjp(
+    const std::vector<array>&,
+    const std::vector<array>& cotangents,
+    const std::vector<int>&,
+    const std::vector<array>&) {
+  return {expand_dims(cotangents[0], axes_, stream())};
+}
+
+std::vector<array> Squeeze::jvp(
+    const std::vector<array>&,
+    const std::vector<array>& tangents,
+    const std::vector<int>&) {
+  return {squeeze(tangents[0], axes_, stream())};
+}
+
+std::pair<std::vector<array>, std::vector<int>> Squeeze::vmap(
+    const std::vector<array>& inputs,
+    const std::vector<int>& axes) {
+  auto ax = axes[0];
+  auto squeeze_axes = axes_;
+  for (auto& s : squeeze_axes) {
+    if (s >= axes[0]) {
+      s++;
+    } else {
+      ax--;
+    }
+  }
+  return {{squeeze(inputs[0], std::move(squeeze_axes), stream())}, {ax}};
+}
+
+bool Squeeze::is_equivalent(const Primitive& other) const {
+  const Squeeze& a_other = static_cast<const Squeeze&>(other);
+  return (axes_ == a_other.axes_);
+}
+
+Shape Squeeze::output_shape(const array& input, const std::vector<int>& axes) {
+  Shape shape;
+  for (int i = 0, j = 0; i < input.ndim(); ++i) {
+    if (j < axes.size() && i == axes[j]) {
+      j++;
+    } else {
+      shape.push_back(input.shape(i));
+    }
+  }
+  return shape;
+}
+
+std::vector<Shape> Squeeze::output_shapes(const std::vector<array>& inputs) {
+  return {Squeeze::output_shape(inputs[0], axes_)};
+}
+
 std::vector<array> Tan::vjp(
     const std::vector<array>& primals,
     const std::vector<array>& cotangents,
@@ -3984,7 +4186,7 @@ std::vector<array> BlockMaskedMM::vjp(
     // Slice mask
     mask_reshape[mask_ndim - 2] = Y;
     mask_reshape[mask_ndim - 1] = X;
-    mask = slice(mask, std::vector<int>(mask_ndim, 0), mask_reshape, stream());
+    mask = slice(mask, Shape(mask_ndim, 0), mask_reshape, stream());
 
     return mask;
   };
@@ -4002,7 +4204,7 @@ std::vector<array> BlockMaskedMM::vjp(
     }
 
     // Reshape
-    std::vector<int> r_reshape(r.shape().begin(), r.shape().end() - 2);
+    Shape r_reshape(r.shape().begin(), r.shape().end() - 2);
     r_reshape.push_back(r.shape(-2) / block_size_);
     r_reshape.push_back(block_size_);
     r_reshape.push_back(r.shape(-1) / block_size_);
@@ -4292,7 +4494,7 @@ std::pair<std::vector<array>, std::vector<int>> NumberOfElements::vmap(
   }
 
   array out = array(
-      std::vector<int>{},
+      {},
       dtype_,
       std::make_shared<NumberOfElements>(stream(), new_axes, inverted_, dtype_),
       inputs);

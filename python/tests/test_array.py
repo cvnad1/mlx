@@ -2,13 +2,19 @@
 
 import gc
 import operator
+import os
 import pickle
-import resource
+import platform
 import sys
 import unittest
 import weakref
 from copy import copy, deepcopy
 from itertools import permutations
+
+if platform.system() == "Windows":
+    import psutil
+else:
+    import resource
 
 import mlx.core as mx
 import mlx_tests
@@ -90,6 +96,18 @@ class TestDtypes(mlx_tests.MLXTestCase):
                 self.assertEqual(z.dtype, getattr(mx, dtype))
                 self.assertListEqual(list(z.shape), list(x.shape))
                 self.assertListEqual(list(z.shape), list(y.shape))
+
+    def test_finfo(self):
+        with self.assertRaises(ValueError):
+            mx.finfo(mx.int32)
+
+        self.assertEqual(mx.finfo(mx.float32).min, np.finfo(np.float32).min)
+        self.assertEqual(mx.finfo(mx.float32).max, np.finfo(np.float32).max)
+        self.assertEqual(mx.finfo(mx.float32).dtype, mx.float32)
+
+        self.assertEqual(mx.finfo(mx.float16).min, np.finfo(np.float16).min)
+        self.assertEqual(mx.finfo(mx.float16).max, np.finfo(np.float16).max)
+        self.assertEqual(mx.finfo(mx.float16).dtype, mx.float16)
 
 
 class TestEquality(mlx_tests.MLXTestCase):
@@ -1932,7 +1950,11 @@ class TestArray(mlx_tests.MLXTestCase):
 
     def test_siblings_without_eval(self):
         def get_mem():
-            return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+            if platform.system() == "Windows":
+                process = psutil.Process(os.getpid())
+                return process.memory_info().peak_wset
+            else:
+                return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
 
         key = mx.array([1, 2])
 
